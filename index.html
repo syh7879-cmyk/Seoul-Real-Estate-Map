@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>대한민국 GIS 지도</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Malgun Gothic', sans-serif; display: flex; height: 100vh; }
+    #map { flex: 1; height: 100%; }
+    #panel {
+      width: 310px; background: #fff;
+      border-left: 1px solid #e0e0e0;
+      display: flex; flex-direction: column; overflow-y: auto;
+    }
+    .panel-section { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; }
+    .panel-title { font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
+    .layer-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+    .layer-btn { font-size: 11px; padding: 4px 12px; border-radius: 999px; border: 1px solid #e2e8f0; background: #f8fafc; color: #64748b; cursor: pointer; font-family: 'Malgun Gothic', sans-serif; transition: all 0.15s; }
+    .layer-btn.on { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+    .addr-card { border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+    .addr-row { display: flex; align-items: flex-start; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #f1f5f9; }
+    .addr-row:last-child { border-bottom: none; }
+    .addr-badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 999px; flex-shrink: 0; margin-top: 1px; }
+    .badge-road   { background: #dbeafe; color: #1d4ed8; }
+    .badge-jibun  { background: #dcfce7; color: #15803d; }
+    .badge-region { background: #fef3c7; color: #b45309; }
+    .badge-zip    { background: #fee2e2; color: #b91c1c; }
+    .badge-coord  { background: #f3e8ff; color: #7e22ce; }
+    .addr-text { font-size: 12px; color: #1e293b; line-height: 1.6; word-break: keep-all; flex: 1; }
+    .addr-text.muted { color: #94a3b8; font-style: italic; }
+    .measure-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .measure-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; }
+    .measure-label { font-size: 10px; color: #94a3b8; margin-bottom: 4px; }
+    .measure-value { font-size: 14px; font-weight: 600; color: #1e293b; line-height: 1.4; }
+    .measure-sub { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .shape-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 9px 12px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; cursor: pointer; transition: background 0.15s; }
+    .shape-item:hover { background: #eff6ff; border-color: #bfdbfe; }
+    .shape-icon { width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+    .icon-marker  { background: #fef3c7; }
+    .icon-line    { background: #dbeafe; }
+    .icon-polygon { background: #dcfce7; }
+    .shape-name { font-size: 13px; font-weight: 500; color: #1e293b; }
+    .shape-meta { font-size: 11px; color: #64748b; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .btn-delete { background: none; border: none; color: #cbd5e1; cursor: pointer; font-size: 15px; padding: 2px; line-height: 1; }
+    .btn-delete:hover { color: #ef4444; }
+    .empty-msg { text-align: center; color: #94a3b8; font-size: 13px; padding: 20px 0; line-height: 1.8; }
+    .tip { background: #eff6ff; border-left: 3px solid #3b82f6; border-radius: 4px; padding: 10px 12px; font-size: 12px; color: #1d4ed8; line-height: 1.8; }
+    .btn-clear { width: 100%; padding: 8px; border: 1px solid #fecaca; border-radius: 8px; background: #fff5f5; color: #dc2626; font-size: 13px; cursor: pointer; font-family: 'Malgun Gothic', sans-serif; }
+    .btn-clear:hover { background: #fee2e2; }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+
+  <div id="panel">
+    <div class="panel-section">
+      <div class="panel-title">지도 레이어</div>
+      <div class="layer-btns">
+        <button class="layer-btn on" id="btnOSM"      onclick="switchBase('osm')">일반지도</button>
+        <button class="layer-btn"   id="btnSatellite" onclick="switchBase('satellite')">위성지도</button>
+        <button class="layer-btn"   id="btnJijuk"     onclick="toggleJijuk()">지적도</button>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">주소 조회</div>
+      <div class="addr-card">
+        <div class="addr-row"><span class="addr-badge badge-road">도로명</span><span class="addr-text muted" id="addrRoad">지도를 클릭하세요</span></div>
+        <div class="addr-row"><span class="addr-badge badge-jibun">지번</span><span class="addr-text muted" id="addrJibun">—</span></div>
+        <div class="addr-row"><span class="addr-badge badge-region">행정구역</span><span class="addr-text muted" id="addrRegion">—</span></div>
+        <div class="addr-row"><span class="addr-badge badge-zip">우편번호</span><span class="addr-text muted" id="addrZip">—</span></div>
+        <div class="addr-row"><span class="addr-badge badge-coord">좌표</span><span class="addr-text muted" id="addrCoord">—</span></div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">측정 결과</div>
+      <div class="measure-grid">
+        <div class="measure-box" style="grid-column:1/-1">
+          <div class="measure-label">면적</div>
+          <div class="measure-value" id="resultArea">—</div>
+          <div class="measure-sub"   id="resultAreaPyeong"></div>
+        </div>
+        <div class="measure-box">
+          <div class="measure-label">둘레 / 길이</div>
+          <div class="measure-value" id="resultLength">—</div>
+        </div>
+        <div class="measure-box">
+          <div class="measure-label">꼭짓점 수</div>
+          <div class="measure-value" id="resultPoints">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section" style="flex:1">
+      <div class="panel-title">그린 도형 목록</div>
+      <div id="shapeList">
+        <div class="empty-msg">왼쪽 지도에서<br>점·선·면을 그려보세요</div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="tip">
+        📍 <b>점</b> — 마커 클릭 후 지도 클릭<br>
+        📏 <b>선</b> — 선 클릭 후 여러 점, 더블클릭 완료<br>
+        ⬡ <b>면</b> — 다각형 클릭 후 꼭짓점, 첫 점으로 닫기<br>
+        🗺 지적도 켜면 필지 경계 확인 가능
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <button class="btn-clear" onclick="clearAll()">전체 도형 삭제</button>
+    </div>
+  </div>
+
+  <script>
+    const VWORLD_KEY = 'D610EF82-D2E0-32E7-B2E7-FC49A7026C01';
+
+    const map = L.map('map').setView([36.5, 127.8], 7);
+
+    const layerOSM = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors', maxZoom: 19
+    });
+    const layerSatellite = L.tileLayer(
+      `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Satellite/{z}/{y}/{x}.jpeg`,
+      { attribution: '© VWorld', maxZoom: 19 }
+    );
+    const layerJijuk = L.tileLayer(
+      `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/LT_C_LSJISUQ/{z}/{y}/{x}.png`,
+      { attribution: '© VWorld 지적도', maxZoom: 19, opacity: 0.7 }
+    );
+
+    layerOSM.addTo(map);
+    let jijukOn = false;
+
+    function switchBase(type) {
+      if (type === 'osm') { map.removeLayer(layerSatellite); layerOSM.addTo(map); }
+      else { map.removeLayer(layerOSM); layerSatellite.addTo(map); }
+      if (jijukOn) { map.removeLayer(layerJijuk); layerJijuk.addTo(map); }
+      document.getElementById('btnOSM').classList.toggle('on', type === 'osm');
+      document.getElementById('btnSatellite').classList.toggle('on', type === 'satellite');
+    }
+
+    function toggleJijuk() {
+      jijukOn = !jijukOn;
+      if (jijukOn) { layerJijuk.addTo(map); if (map.getZoom() < 15) map.setZoom(15); }
+      else { map.removeLayer(layerJijuk); }
+      document.getElementById('btnJijuk').classList.toggle('on', jijukOn);
+    }
+
+    const drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+    let shapeCount    = { marker: 0, polyline: 0, polygon: 0 };
+    let shapeRegistry = [];
+
+    const drawControl = new L.Control.Draw({
+      position: 'topleft',
+      draw: {
+        marker: true,
+        polyline: { shapeOptions: { color: '#3b82f6', weight: 3 } },
+        polygon:  { shapeOptions: { color: '#10b981', weight: 2, fillColor: '#10b981', fillOpacity: 0.2 } },
+        circle: false, rectangle: false, circlemarker: false
+      },
+      edit: { featureGroup: drawnItems }
+    });
+    map.addControl(drawControl);
+
+    function searchAddress(lat, lng) {
+      setAddrLoading();
+      setText('addrCoord', lat.toFixed(6) + '° / ' + lng.toFixed(6) + '°');
+      const parcelUrl = `https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point=${lng},${lat}&format=json&type=parcel&zipcode=true&simple=false&key=${VWORLD_KEY}`;
+      const roadUrl   = `https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point=${lng},${lat}&format=json&type=road&zipcode=true&simple=false&key=${VWORLD_KEY}`;
+      Promise.all([
+        fetch(parcelUrl).then(r => r.json()).catch(() => null),
+        fetch(roadUrl).then(r => r.json()).catch(() => null)
+      ]).then(([parcelData, roadData]) => {
+        let jibunAddr = '—', roadAddr = '—', region = '—', zipCode = '—';
+        const parcelResult = parcelData?.response?.result;
+        if (parcelResult && parcelResult.length > 0) {
+          const p = parcelResult[0];
+          jibunAddr = p.text || '—';
+          const s = p.structure;
+          if (s) region = [s.level1, s.level2, s.level4L || s.level4A, s.level5].filter(Boolean).join(' › ');
+          if (p.zipcode) zipCode = p.zipcode;
+        }
+        const roadResult = roadData?.response?.result;
+        if (roadResult && roadResult.length > 0) {
+          const r = roadResult[0];
+          roadAddr = r.text || '—';
+          if (r.zipcode) zipCode = r.zipcode;
+          if (region === '—') {
+            const s = r.structure;
+            if (s) region = [s.level1, s.level2, s.level4L || s.level4A].filter(Boolean).join(' › ');
+          }
+        }
+        if (jibunAddr === '—' && roadAddr === '—') { searchAddressBackup(lat, lng); return; }
+        setText('addrRoad', roadAddr);
+        setText('addrJibun', jibunAddr);
+        setText('addrRegion', region);
+        setText('addrZip', zipCode);
+      });
+    }
+
+    function searchAddressBackup(lat, lng) {
+      fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ko&addressdetails=1&zoom=18`)
+        .then(r => r.json())
+        .then(data => {
+          if (!data?.address) { setAddrFail(); return; }
+          const a = data.address;
+          setText('addrRoad',   [a.road, a.house_number].filter(Boolean).join(' ') || '—');
+          setText('addrJibun',  a.quarter || a.neighbourhood || a.suburb || '—');
+          setText('addrRegion', [a.state, a.city || a.county, a.suburb].filter(Boolean).join(' › ') || '—');
+          setText('addrZip',    a.postcode || '—');
+        }).catch(() => setAddrFail());
+    }
+
+    function setAddrLoading() {
+      ['addrRoad','addrJibun','addrRegion','addrZip'].forEach(id => {
+        document.getElementById(id).textContent = '조회 중...';
+        document.getElementById(id).classList.add('muted');
+      });
+    }
+    function setAddrFail() {
+      setText('addrRoad', '조회 실패');
+      ['addrJibun','addrRegion','addrZip'].forEach(id => setText(id, '—'));
+    }
+    function setText(id, val) {
+      const el = document.getElementById(id);
+      el.textContent = val;
+      el.classList.remove('muted');
+    }
+
+    map.on('click', function(e) { searchAddress(e.latlng.lat, e.latlng.lng); });
+
+    map.on(L.Draw.Event.CREATED, function(e) {
+      const layer = e.layer, type = e.layerType;
+      drawnItems.addLayer(layer);
+      let name, centerLat, centerLng;
+
+      if (type === 'marker') {
+        shapeCount.marker++;
+        name = '마커 ' + shapeCount.marker;
+        centerLat = layer.getLatLng().lat;
+        centerLng = layer.getLatLng().lng;
+        updateMeasure('—', '—', '1');
+
+      } else if (type === 'polyline') {
+        shapeCount.polyline++;
+        name = '선 ' + shapeCount.polyline;
+        const lls = layer.getLatLngs();
+        const coords = lls.map(ll => [ll.lng, ll.lat]);
+        const km = turf.length(turf.lineString(coords), { units: 'kilometers' });
+        const mid = lls[Math.floor(lls.length / 2)];
+        centerLat = mid.lat; centerLng = mid.lng;
+        updateMeasure('—', formatLength(km), String(lls.length));
+
+      } else if (type === 'polygon') {
+        shapeCount.polygon++;
+        name = '면 ' + shapeCount.polygon;
+        const lls = layer.getLatLngs()[0];
+        const coords = lls.map(ll => [ll.lng, ll.lat]);
+        coords.push(coords[0]);
+        const poly  = turf.polygon([coords]);
+        const sqm   = turf.area(poly);
+        const perim = turf.length(turf.polygonToLine(poly), { units: 'kilometers' });
+        const cent  = turf.centroid(poly);
+        centerLat = cent.geometry.coordinates[1];
+        centerLng = cent.geometry.coordinates[0];
+        updateMeasure(formatArea(sqm), formatLength(perim), String(lls.length));
+      }
+
+      searchAddress(centerLat, centerLng);
+      const id = Date.now();
+      shapeRegistry.push({ id, layer, type, name });
+      renderShapeList();
+    });
+
+    function updateMeasure(area, length, points) {
+      document.getElementById('resultArea').textContent   = area;
+      document.getElementById('resultLength').textContent = length;
+      document.getElementById('resultPoints').textContent = points;
+      if (area !== '—') {
+        const sqm    = parseFloat(area.replace(/[^0-9.]/g, ''));
+        const pyeong = (sqm / 3.305785).toFixed(1);
+        document.getElementById('resultAreaPyeong').textContent = '≈ ' + Number(pyeong).toLocaleString() + ' 평';
+      } else {
+        document.getElementById('resultAreaPyeong').textContent = '';
+      }
+    }
+
+    function renderShapeList() {
+      const container = document.getElementById('shapeList');
+      if (shapeRegistry.length === 0) {
+        container.innerHTML = '<div class="empty-msg">왼쪽 지도에서<br>점·선·면을 그려보세요</div>';
+        return;
+      }
+      container.innerHTML = shapeRegistry.map(s => {
+        const icon      = s.type === 'marker' ? '📍' : s.type === 'polyline' ? '📏' : '⬡';
+        const iconClass = s.type === 'marker' ? 'icon-marker' : s.type === 'polyline' ? 'icon-line' : 'icon-polygon';
+        return `
+          <div class="shape-item" onclick="focusShape(${s.id})">
+            <div class="shape-icon ${iconClass}">${icon}</div>
+            <div class="shape-info" style="flex:1;min-width:0">
+              <div class="shape-name">${s.name}</div>
+              <div class="shape-meta">${getShapeMeta(s)}</div>
+            </div>
+            <button class="btn-delete" onclick="deleteShape(event,${s.id})">✕</button>
+          </div>`;
+      }).join('');
+    }
+
+    function getShapeMeta(s) {
+      try {
+        if (s.type === 'marker') {
+          const ll = s.layer.getLatLng();
+          return ll.lat.toFixed(4) + '° / ' + ll.lng.toFixed(4) + '°';
+        } else if (s.type === 'polyline') {
+          const coords = s.layer.getLatLngs().map(ll => [ll.lng, ll.lat]);
+          return '길이 ' + formatLength(turf.length(turf.lineString(coords), { units: 'kilometers' }));
+        } else if (s.type === 'polygon') {
+          const coords = s.layer.getLatLngs()[0].map(ll => [ll.lng, ll.lat]);
+          coords.push(coords[0]);
+          return '면적 ' + formatArea(turf.area(turf.polygon([coords])));
+        }
+      } catch(e) { return ''; }
+    }
+
+    function focusShape(id) {
+      const s = shapeRegistry.find(x => x.id === id);
+      if (!s) return;
+      if (s.type === 'marker') map.setView(s.layer.getLatLng(), 17);
+      else map.fitBounds(s.layer.getBounds(), { padding: [40, 40] });
+    }
+
+    function deleteShape(event, id) {
+      event.stopPropagation();
+      const idx = shapeRegistry.findIndex(x => x.id === id);
+      if (idx === -1) return;
+      drawnItems.removeLayer(shapeRegistry[idx].layer);
+      shapeRegistry.splice(idx, 1);
+      renderShapeList();
+    }
+
+    function clearAll() {
+      if (!confirm('모든 도형을 삭제할까요?')) return;
+      drawnItems.clearLayers();
+      shapeRegistry = [];
+      shapeCount = { marker: 0, polyline: 0, polygon: 0 };
+      document.getElementById('resultArea').textContent       = '—';
+      document.getElementById('resultAreaPyeong').textContent = '';
+      document.getElementById('resultLength').textContent     = '—';
+      document.getElementById('resultPoints').textContent     = '—';
+      ['addrRoad','addrJibun','addrRegion','addrZip','addrCoord'].forEach(id => {
+        const el = document.getElementById(id);
+        el.textContent = id === 'addrRoad' ? '지도를 클릭하세요' : '—';
+        el.classList.add('muted');
+      });
+      renderShapeList();
+    }
+
+    function formatArea(sqm) {
+      return sqm >= 1000000
+        ? (sqm / 1000000).toFixed(4) + ' km²'
+        : Math.round(sqm).toLocaleString() + ' m²';
+    }
+
+    function formatLength(km) {
+      return km >= 1
+        ? km.toFixed(3) + ' km'
+        : Math.round(km * 1000) + ' m';
+    }
+  </script>
+</body>
+</html>

@@ -4,13 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>대한민국 GIS 지도</title>
-
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
-
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Malgun Gothic', sans-serif; display: flex; height: 100vh; }
@@ -55,18 +53,26 @@
     .tip { background: #eff6ff; border-left: 3px solid #3b82f6; border-radius: 4px; padding: 10px 12px; font-size: 12px; color: #1d4ed8; line-height: 1.8; }
     .btn-clear { width: 100%; padding: 8px; border: 1px solid #fecaca; border-radius: 8px; background: #fff5f5; color: #dc2626; font-size: 13px; cursor: pointer; font-family: 'Malgun Gothic', sans-serif; }
     .btn-clear:hover { background: #fee2e2; }
+    #vworld-warn {
+      display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+      background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px;
+      padding: 8px 18px; font-size: 12px; color: #b45309; z-index: 9999;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15); white-space: nowrap;
+    }
   </style>
 </head>
-
 <body>
+
+  <div id="vworld-warn">⚠️ VWorld 타일 오류 — API 키 또는 도메인 등록을 확인하세요</div>
   <div id="map"></div>
 
   <div id="panel">
     <div class="panel-section">
       <div class="panel-title">지도 레이어</div>
       <div class="layer-btns">
-        <button class="layer-btn on" id="btnOSM"      onclick="switchBase('osm')">일반지도</button>
+        <button class="layer-btn on" id="btnBase"     onclick="switchBase('base')">일반지도</button>
         <button class="layer-btn"   id="btnSatellite" onclick="switchBase('satellite')">위성지도</button>
+        <button class="layer-btn"   id="btnHybrid"    onclick="switchBase('hybrid')">하이브리드</button>
         <button class="layer-btn"   id="btnJijuk"     onclick="toggleJijuk()">지적도</button>
       </div>
     </div>
@@ -123,40 +129,84 @@
   </div>
 
   <script>
+    /* ── VWorld API 키 ── */
     const VWORLD_KEY = 'D610EF82-D2E0-32E7-B2E7-FC49A7026C01';
 
-    const map = L.map('map').setView([36.5, 127.8], 7);
+    /* ── 지도 초기화 (서울 중심) ── */
+    const map = L.map('map').setView([37.5665, 126.9780], 11);
 
-    const layerOSM = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors', maxZoom: 19
-    });
-    const layerSatellite = L.tileLayer(
+    /* ── VWorld 타일 레이어 ── */
+    const layerBase = L.tileLayer(
+      `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{y}/{x}.png`,
+      { attribution: '© VWorld (국토지리정보원)', maxZoom: 19 }
+    );
+    const layerSat = L.tileLayer(
       `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Satellite/{z}/{y}/{x}.jpeg`,
-      { attribution: '© VWorld', maxZoom: 19 }
+      { attribution: '© VWorld (국토지리정보원)', maxZoom: 19 }
+    );
+    const layerSatHybrid = L.tileLayer(
+      `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Satellite/{z}/{y}/{x}.jpeg`,
+      { attribution: '© VWorld (국토지리정보원)', maxZoom: 19 }
+    );
+    const layerHybridLabel = L.tileLayer(
+      `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Hybrid/{z}/{y}/{x}.png`,
+      { attribution: '© VWorld (국토지리정보원)', maxZoom: 19 }
     );
     const layerJijuk = L.tileLayer(
       `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/LT_C_LSJISUQ/{z}/{y}/{x}.png`,
       { attribution: '© VWorld 지적도', maxZoom: 19, opacity: 0.7 }
     );
 
-    layerOSM.addTo(map);
+    /* ── VWorld 오류 감지 ── */
+    let warnShown = false;
+    function showVWorldWarn() {
+      if (warnShown) return;
+      warnShown = true;
+      const el = document.getElementById('vworld-warn');
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; }, 8000);
+    }
+    layerBase.on('tileerror', showVWorldWarn);
+    layerSat.on('tileerror', showVWorldWarn);
+
+    /* ── 기본 레이어 시작 : VWorld 일반지도 ── */
+    layerBase.addTo(map);
+    let currentBase = 'base';
     let jijukOn = false;
 
+    /* ── 베이스 전환 ── */
     function switchBase(type) {
-      if (type === 'osm') { map.removeLayer(layerSatellite); layerOSM.addTo(map); }
-      else { map.removeLayer(layerOSM); layerSatellite.addTo(map); }
+      [layerBase, layerSat, layerSatHybrid, layerHybridLabel].forEach(l => {
+        if (map.hasLayer(l)) map.removeLayer(l);
+      });
+      currentBase = type;
+      if (type === 'base') {
+        layerBase.addTo(map);
+      } else if (type === 'satellite') {
+        layerSat.addTo(map);
+      } else if (type === 'hybrid') {
+        layerSatHybrid.addTo(map);
+        layerHybridLabel.addTo(map);
+      }
       if (jijukOn) { map.removeLayer(layerJijuk); layerJijuk.addTo(map); }
-      document.getElementById('btnOSM').classList.toggle('on', type === 'osm');
+      document.getElementById('btnBase').classList.toggle('on', type === 'base');
       document.getElementById('btnSatellite').classList.toggle('on', type === 'satellite');
+      document.getElementById('btnHybrid').classList.toggle('on', type === 'hybrid');
     }
 
+    /* ── 지적도 토글 ── */
     function toggleJijuk() {
       jijukOn = !jijukOn;
-      if (jijukOn) { layerJijuk.addTo(map); if (map.getZoom() < 15) map.setZoom(15); }
-      else { map.removeLayer(layerJijuk); }
+      if (jijukOn) {
+        layerJijuk.addTo(map);
+        if (map.getZoom() < 15) map.setZoom(15);
+      } else {
+        map.removeLayer(layerJijuk);
+      }
       document.getElementById('btnJijuk').classList.toggle('on', jijukOn);
     }
 
+    /* ── 그리기 도구 ── */
     const drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
     let shapeCount    = { marker: 0, polyline: 0, polygon: 0 };
@@ -165,52 +215,55 @@
     const drawControl = new L.Control.Draw({
       position: 'topleft',
       draw: {
-        marker: true,
-        polyline: { shapeOptions: { color: '#3b82f6', weight: 3 } },
-        polygon:  { shapeOptions: { color: '#10b981', weight: 2, fillColor: '#10b981', fillOpacity: 0.2 } },
-        circle: false, rectangle: false, circlemarker: false
+        marker:       true,
+        polyline:     { shapeOptions: { color: '#3b82f6', weight: 3 } },
+        polygon:      { shapeOptions: { color: '#10b981', weight: 2, fillColor: '#10b981', fillOpacity: 0.2 } },
+        circle:       false,
+        rectangle:    false,
+        circlemarker: false
       },
       edit: { featureGroup: drawnItems }
     });
     map.addControl(drawControl);
 
+    /* ── 주소 조회 (VWorld Reverse Geocoding) ── */
     function searchAddress(lat, lng) {
       setAddrLoading();
       setText('addrCoord', lat.toFixed(6) + '° / ' + lng.toFixed(6) + '°');
-      const parcelUrl = `https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point=${lng},${lat}&format=json&type=parcel&zipcode=true&simple=false&key=${VWORLD_KEY}`;
-      const roadUrl   = `https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point=${lng},${lat}&format=json&type=road&zipcode=true&simple=false&key=${VWORLD_KEY}`;
+      const pUrl = `https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point=${lng},${lat}&format=json&type=parcel&zipcode=true&simple=false&key=${VWORLD_KEY}`;
+      const rUrl = `https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point=${lng},${lat}&format=json&type=road&zipcode=true&simple=false&key=${VWORLD_KEY}`;
       Promise.all([
-        fetch(parcelUrl).then(r => r.json()).catch(() => null),
-        fetch(roadUrl).then(r => r.json()).catch(() => null)
-      ]).then(([parcelData, roadData]) => {
-        let jibunAddr = '—', roadAddr = '—', region = '—', zipCode = '—';
-        const parcelResult = parcelData?.response?.result;
-        if (parcelResult && parcelResult.length > 0) {
-          const p = parcelResult[0];
-          jibunAddr = p.text || '—';
+        fetch(pUrl).then(r => r.json()).catch(() => null),
+        fetch(rUrl).then(r => r.json()).catch(() => null)
+      ]).then(([pData, rData]) => {
+        let jibun = '—', road = '—', region = '—', zip = '—';
+        const pRes = pData?.response?.result;
+        if (pRes && pRes.length > 0) {
+          const p = pRes[0];
+          jibun = p.text || '—';
           const s = p.structure;
           if (s) region = [s.level1, s.level2, s.level4L || s.level4A, s.level5].filter(Boolean).join(' › ');
-          if (p.zipcode) zipCode = p.zipcode;
+          if (p.zipcode) zip = p.zipcode;
         }
-        const roadResult = roadData?.response?.result;
-        if (roadResult && roadResult.length > 0) {
-          const r = roadResult[0];
-          roadAddr = r.text || '—';
-          if (r.zipcode) zipCode = r.zipcode;
+        const rRes = rData?.response?.result;
+        if (rRes && rRes.length > 0) {
+          const r = rRes[0];
+          road = r.text || '—';
+          if (r.zipcode) zip = r.zipcode;
           if (region === '—') {
             const s = r.structure;
             if (s) region = [s.level1, s.level2, s.level4L || s.level4A].filter(Boolean).join(' › ');
           }
         }
-        if (jibunAddr === '—' && roadAddr === '—') { searchAddressBackup(lat, lng); return; }
-        setText('addrRoad', roadAddr);
-        setText('addrJibun', jibunAddr);
+        if (jibun === '—' && road === '—') { backupAddress(lat, lng); return; }
+        setText('addrRoad', road);
+        setText('addrJibun', jibun);
         setText('addrRegion', region);
-        setText('addrZip', zipCode);
+        setText('addrZip', zip);
       });
     }
 
-    function searchAddressBackup(lat, lng) {
+    function backupAddress(lat, lng) {
       fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ko&addressdetails=1&zoom=18`)
         .then(r => r.json())
         .then(data => {
@@ -225,8 +278,9 @@
 
     function setAddrLoading() {
       ['addrRoad','addrJibun','addrRegion','addrZip'].forEach(id => {
-        document.getElementById(id).textContent = '조회 중...';
-        document.getElementById(id).classList.add('muted');
+        const el = document.getElementById(id);
+        el.textContent = '조회 중...';
+        el.classList.add('muted');
       });
     }
     function setAddrFail() {
@@ -239,18 +293,19 @@
       el.classList.remove('muted');
     }
 
-    map.on('click', function(e) { searchAddress(e.latlng.lat, e.latlng.lng); });
+    map.on('click', e => searchAddress(e.latlng.lat, e.latlng.lng));
 
+    /* ── 도형 생성 ── */
     map.on(L.Draw.Event.CREATED, function(e) {
       const layer = e.layer, type = e.layerType;
       drawnItems.addLayer(layer);
-      let name, centerLat, centerLng;
+      let name, cLat, cLng;
 
       if (type === 'marker') {
         shapeCount.marker++;
         name = '마커 ' + shapeCount.marker;
-        centerLat = layer.getLatLng().lat;
-        centerLng = layer.getLatLng().lng;
+        cLat = layer.getLatLng().lat;
+        cLng = layer.getLatLng().lng;
         updateMeasure('—', '—', '1');
 
       } else if (type === 'polyline') {
@@ -260,7 +315,7 @@
         const coords = lls.map(ll => [ll.lng, ll.lat]);
         const km = turf.length(turf.lineString(coords), { units: 'kilometers' });
         const mid = lls[Math.floor(lls.length / 2)];
-        centerLat = mid.lat; centerLng = mid.lng;
+        cLat = mid.lat; cLng = mid.lng;
         updateMeasure('—', formatLength(km), String(lls.length));
 
       } else if (type === 'polygon') {
@@ -273,30 +328,31 @@
         const sqm   = turf.area(poly);
         const perim = turf.length(turf.polygonToLine(poly), { units: 'kilometers' });
         const cent  = turf.centroid(poly);
-        centerLat = cent.geometry.coordinates[1];
-        centerLng = cent.geometry.coordinates[0];
+        cLat = cent.geometry.coordinates[1];
+        cLng = cent.geometry.coordinates[0];
         updateMeasure(formatArea(sqm), formatLength(perim), String(lls.length));
       }
 
-      searchAddress(centerLat, centerLng);
-      const id = Date.now();
-      shapeRegistry.push({ id, layer, type, name });
+      searchAddress(cLat, cLng);
+      shapeRegistry.push({ id: Date.now(), layer, type, name });
       renderShapeList();
     });
 
+    /* ── 측정값 표시 ── */
     function updateMeasure(area, length, points) {
       document.getElementById('resultArea').textContent   = area;
       document.getElementById('resultLength').textContent = length;
       document.getElementById('resultPoints').textContent = points;
       if (area !== '—') {
-        const sqm    = parseFloat(area.replace(/[^0-9.]/g, ''));
-        const pyeong = (sqm / 3.305785).toFixed(1);
-        document.getElementById('resultAreaPyeong').textContent = '≈ ' + Number(pyeong).toLocaleString() + ' 평';
+        const sqm = parseFloat(area.replace(/[^0-9.]/g, ''));
+        document.getElementById('resultAreaPyeong').textContent =
+          '≈ ' + Number((sqm / 3.305785).toFixed(1)).toLocaleString() + ' 평';
       } else {
         document.getElementById('resultAreaPyeong').textContent = '';
       }
     }
 
+    /* ── 도형 목록 ── */
     function renderShapeList() {
       const container = document.getElementById('shapeList');
       if (shapeRegistry.length === 0) {
@@ -309,7 +365,7 @@
         return `
           <div class="shape-item" onclick="focusShape(${s.id})">
             <div class="shape-icon ${iconClass}">${icon}</div>
-            <div class="shape-info" style="flex:1;min-width:0">
+            <div style="flex:1;min-width:0">
               <div class="shape-name">${s.name}</div>
               <div class="shape-meta">${getShapeMeta(s)}</div>
             </div>
@@ -341,8 +397,8 @@
       else map.fitBounds(s.layer.getBounds(), { padding: [40, 40] });
     }
 
-    function deleteShape(event, id) {
-      event.stopPropagation();
+    function deleteShape(ev, id) {
+      ev.stopPropagation();
       const idx = shapeRegistry.findIndex(x => x.id === id);
       if (idx === -1) return;
       drawnItems.removeLayer(shapeRegistry[idx].layer);
@@ -355,10 +411,8 @@
       drawnItems.clearLayers();
       shapeRegistry = [];
       shapeCount = { marker: 0, polyline: 0, polygon: 0 };
-      document.getElementById('resultArea').textContent       = '—';
+      ['resultArea','resultLength','resultPoints'].forEach(id => document.getElementById(id).textContent = '—');
       document.getElementById('resultAreaPyeong').textContent = '';
-      document.getElementById('resultLength').textContent     = '—';
-      document.getElementById('resultPoints').textContent     = '—';
       ['addrRoad','addrJibun','addrRegion','addrZip','addrCoord'].forEach(id => {
         const el = document.getElementById(id);
         el.textContent = id === 'addrRoad' ? '지도를 클릭하세요' : '—';
@@ -367,12 +421,12 @@
       renderShapeList();
     }
 
+    /* ── 단위 포맷 ── */
     function formatArea(sqm) {
       return sqm >= 1000000
         ? (sqm / 1000000).toFixed(4) + ' km²'
         : Math.round(sqm).toLocaleString() + ' m²';
     }
-
     function formatLength(km) {
       return km >= 1
         ? km.toFixed(3) + ' km'
